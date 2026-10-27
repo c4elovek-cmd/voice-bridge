@@ -24,7 +24,9 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 # опционально: apt install yt-dlp (или pip install yt-dlp)
 export VOICE_TOKEN=""            # пусто — сгенерируется и сохранится в voice-bridge-state.json
-export LLM_KEY="sk-or-..."       # ключ OpenRouter
+export LLM_PROVIDER="deepseek-web"  # deepseek-web | openrouter | none
+export DEEPSEEK_TOKEN="..."      # токен сессии веб-чата (userToken из cookies), свой аккаунт
+export LLM_KEY="sk-or-..."       # ключ OpenRouter — резерв
 export LLM_MODEL="deepseek/deepseek-chat-v3-0324:free"
 export VOICE_PROXY="socks5://..."  # опционально, для YouTube из РФ
 uvicorn app:app --host 127.0.0.1 --port 8811
