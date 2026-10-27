@@ -1,0 +1,16 @@
+# deepseek-bridge — голосовой плагин (скелет)
+
+[package]
+id = "deepseek-bridge"
+name = "DeepSeek Bridge"
+version = "0.1.0"
+description = "Голосовой ассистент: триггер-фраза 'дипсик', ответы через LLM-мост"
+type = "service"
+
+permissions = ["commands", "audio", "exec"]
+
+[commands]
+phrases = ["дипсик"]
+
+[compatibility]
+features = ["audio.play.aplay", "plugin.yap.v1"]
