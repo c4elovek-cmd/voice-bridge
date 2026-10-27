@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 import re
@@ -206,20 +208,73 @@ def _iter_content(node: Any):
 
 
 # --------------------------------------------------------------------------- #
-# Поиск музыки: yt-dlp без установки через pip (бинарник рядом или в PATH)
+# Поиск музыки: источники на выбор (yt-dlp умеет YouTube и SoundCloud,
+# Spotify даёт метаданные — воспроизводим найденное из открытых источников)
 # --------------------------------------------------------------------------- #
-def resolve_track(query: str) -> dict[str, Any] | None:
-    """Найти трек на YouTube Music, вернуть {title, url} — прямую ссылку на поток."""
+BRIDGE_CONFIG_PATH = Path(os.environ.get("BRIDGE_CONFIG", "bridge-config.json"))
+BRIDGE_CONFIG: dict[str, Any] = {"source": "youtube"}
+if BRIDGE_CONFIG_PATH.exists():
+    try:
+        BRIDGE_CONFIG.update(json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8")))
+    except Exception as exc:
+        print(f"[!] bridge config не читается: {exc}")
+
+
+def save_bridge_config() -> None:
+    BRIDGE_CONFIG_PATH.write_text(json.dumps(BRIDGE_CONFIG, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+_spotify_token: dict[str, Any] = {"value": None, "expires": 0.0}
+
+
+def spotify_track_query(text: str) -> str | None:
+    """Если запрос похож на Spotify-ссылку/URI — вернуть 'исполнитель - трек'."""
+    import re as _re
+    match = _re.search(r"(?:open\.spotify\.com/track/|spotify:track:)([A-Za-z0-9]+)", text)
+    if not match or not (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET):
+        return None
+    if time.time() >= _spotify_token["expires"]:
+        response = _client.post(
+            "https://accounts.spotify.com/api/token",
+            data={"grant_type": "client_credentials"},
+            headers={"authorization": "Basic " + base64.b64encode(
+                f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()},
+        )
+        response.raise_for_status()
+        token = response.json()
+        _spotify_token["value"] = token["access_token"]
+        _spotify_token["expires"] = time.time() + int(token.get("expires_in", 3600)) - 60
+    meta = _client.get(
+        f"https://api.spotify.com/v1/tracks/{match.group(1)}",
+        headers={"authorization": "Bearer " + _spotify_token["value"]},
+    ).json()
+    artists = ", ".join(a["name"] for a in meta.get("artists", []))
+    return (artists + " - " + meta.get("name", "")).strip(" -") or None
+
+
+def resolve_track(query: str, source: str | None = None) -> dict[str, Any] | None:
+    """Найти трек на выбранном источнике, вернуть {title, url, source}."""
     import shutil
     import subprocess
 
+    source = (source or BRIDGE_CONFIG.get("source") or "youtube").lower()
+    # спотифай-ссылка → метаданные, играет открытый источник
+    resolved = spotify_track_query(query)
+    if resolved:
+        query, source = resolved, "youtube"
+    if source == "spotify":
+        source = "youtube"  # без прямой ссылки Spotify DRM не обойти
+
+    search = {"soundcloud": "scsearch1:"}.get(source, "ytsearch1:")
     ytdlp = shutil.which("yt-dlp")
     if not ytdlp:
         return None
     cmd = [
         ytdlp,
         "--dump-json", "--no-playlist", "--no-warnings",
-        "--default-search", "ytsearch1:",
+        "--default-search", search,
         query,
     ]
     if PROXY_URL:
@@ -236,6 +291,7 @@ def resolve_track(query: str) -> dict[str, Any] | None:
             "title": info.get("title") or query,
             "url": info.get("url") or info.get("webpage_url"),
             "id": info.get("id"),
+            "source": source,
         }
     except Exception:
         return None
@@ -245,7 +301,8 @@ def resolve_track(query: str) -> dict[str, Any] | None:
 # Ручки
 # --------------------------------------------------------------------------- #
 def auth(request: Request) -> None:
-    if request.headers.get("x-voice-token", "") != TOKEN:
+    token = request.headers.get("x-voice-token", "") or request.query_params.get("token", "")
+    if token != TOKEN:
         raise HTTPException(status_code=401, detail="bad token")
 
 
@@ -263,11 +320,33 @@ async def api_voice(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="transcript is empty")
     intent = await ask_llm(text)
 
-    result: dict[str, Any] = {"intent": intent}
+    source = str(data.get("source") or intent.get("source") or "").lower() or None
+    result: dict[str, Any] = {"intent": intent, "source": source or BRIDGE_CONFIG.get("source")}
     if intent.get("action") == "play":
-        track = resolve_track(intent.get("query") or text)
-        result["track"] = track
+        result["track"] = resolve_track(intent.get("query") or text, source)
     return JSONResponse(result)
+
+
+@app.get("/api/bridge/config")
+async def api_bridge_config(request: Request) -> JSONResponse:
+    auth(request)
+    return JSONResponse({
+        "source": BRIDGE_CONFIG.get("source", "youtube"),
+        "sources": ["youtube", "soundcloud", "spotify"],
+        "spotify_configured": bool(SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET),
+    })
+
+
+@app.put("/api/bridge/config")
+async def api_bridge_config_put(request: Request) -> JSONResponse:
+    auth(request)
+    data = await request.json()
+    source = str(data.get("source", "")).lower()
+    if source not in ("youtube", "soundcloud", "spotify"):
+        raise HTTPException(status_code=400, detail="источник: youtube | soundcloud | spotify")
+    BRIDGE_CONFIG["source"] = source
+    save_bridge_config()
+    return JSONResponse({"ok": True, "source": source})
 
 
 @app.post("/api/tts")
