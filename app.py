@@ -31,8 +31,11 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "deepseek-web")  # deepseek-web | 
 LLM_BASE = os.environ.get("LLM_BASE", "https://openrouter.ai/api/v1")
 LLM_KEY = os.environ.get("LLM_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek/deepseek-chat-v3-0324:free")
-# токен сессии chat.deepseek.com (cookie userToken), для LLM_PROVIDER=deepseek-web
+# токен сессии веб-чата (userToken из localStorage chat.deepseek.com), для deepseek-web
 DEEPSEEK_TOKEN = os.environ.get("DEEPSEEK_TOKEN", "")
+# куки веб-чата опционально: aws-waf-token (анти-бот AWS WAF) может понадобиться.
+# Формат: "name=value; name2=value2"
+DEEPSEEK_COOKIE = os.environ.get("DEEPSEEK_COOKIE", "")
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE", "https://chat.deepseek.com/api/v0")
 # прокси для ссылок, которые могут из РФ не открываться (yt-dlp и т.д.)
 PROXY_URL = os.environ.get("VOICE_PROXY", "")
@@ -127,7 +130,7 @@ _ds_session: dict[str, Any] = {"id": None, "ts": 0.0}
 
 
 def _ds_headers() -> dict[str, str]:
-    return {
+    headers = {
         "authorization": f"Bearer {DEEPSEEK_TOKEN}",
         "content-type": "application/json",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -136,6 +139,9 @@ def _ds_headers() -> dict[str, str]:
         "origin": "https://chat.deepseek.com",
         "referer": "https://chat.deepseek.com/",
     }
+    if DEEPSEEK_COOKIE:
+        headers["cookie"] = DEEPSEEK_COOKIE
+    return headers
 
 
 def _ds_new_session() -> str:
