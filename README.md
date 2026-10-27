@@ -54,3 +54,9 @@ curl -H "X-Voice-Token: $TOKEN" -H "content-type: application/json" \
      -d '{"transcript":"включи Кино — Пачка сигарет"}' \
      https://voice.c4elovek.online/api/voice
 ```
+
+## Лицензия
+
+[PolyForm Strict](LICENSE) — код открыт для просмотра и личного использования,
+но запрещено распространять его и создавать производные работы.
+
